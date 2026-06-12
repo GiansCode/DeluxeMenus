@@ -191,7 +191,6 @@ public class DeluxeMenusConfig {
                 continue;
             }
             saveResourceToFile(name + ".yml", menuFile);
-            c.set("gui_menus." + name + ".file", menuFile.getName());
         }
         plugin.saveConfig();
         plugin.reloadConfig();
@@ -272,79 +271,84 @@ public class DeluxeMenusConfig {
 
         FileConfiguration c = plugin.getConfig();
 
-        if (!c.contains("gui_menus")) {
-            return false;
+        // Try to load from an explicit config.yml entry first
+        if (c.contains("gui_menus") && c.isConfigurationSection("gui_menus")) {
+            Set<String> keys = c.getConfigurationSection("gui_menus").getKeys(false);
+            if (keys.contains(menu)) {
+                if (c.contains("gui_menus." + menu + ".file")) {
+                    return loadMenuFromFile(menu);
+                } else {
+                    loadMenu(c, menu, true, "config");
+                    return true;
+                }
+            }
         }
 
-        if (!c.isConfigurationSection("gui_menus")) {
-            return false;
+        // Fall back to auto-discovering the file by convention (<menuName>.yml)
+        File f = new File(menuDirectory.getPath(), menu + ".yml");
+        if (f.exists()) {
+            return loadMenuFile(menu, f);
         }
 
-        Set<String> keys = c.getConfigurationSection("gui_menus").getKeys(false);
-
-        if (keys.isEmpty()) {
-            return false;
-        }
-
-        if (!keys.contains(menu)) {
-            return false;
-        }
-
-        if (c.contains("gui_menus." + menu + ".file")) {
-            loadMenuFromFile(menu);
-        } else {
-            loadMenu(c, menu, true, "config");
-        }
-
-        return true;
+        return false;
     }
 
     public int loadGUIMenus() {
-
         if (checkConfig(null, "config.yml", false) == null) {
             return 0;
         }
 
         FileConfiguration c = plugin.getConfig();
 
-        if (!c.contains("gui_menus")) {
-            return 0;
-        }
-
-        if (!c.isConfigurationSection("gui_menus")) {
-            return 0;
-        }
-
-        Set<String> keys = c.getConfigurationSection("gui_menus").getKeys(false);
-
-        if (keys.isEmpty()) {
-            return 0;
-        }
-
-        for (String key : keys) {
-
-            if (c.contains("gui_menus." + key + ".file")) {
-
-                loadMenuFromFile(key);
-
-            } else {
-                loadMenu(c, key, true, "config");
+        // Load menus explicitly listed in config.yml (inline or file-based)
+        if (c.contains("gui_menus") && c.isConfigurationSection("gui_menus")) {
+            Set<String> keys = c.getConfigurationSection("gui_menus").getKeys(false);
+            for (String key : keys) {
+                if (c.contains("gui_menus." + key + ".file")) {
+                    loadMenuFromFile(key);
+                } else {
+                    loadMenu(c, key, true, "config");
+                }
             }
         }
+
+        // Auto-discover every .yml file in the gui_menus directory
+        autoDiscoverMenus();
+
         return Menu.getLoadedMenuSize();
     }
 
-    public boolean loadMenuFromFile(String menuName) {
+    private void autoDiscoverMenus() {
+        File[] ymlFiles = menuDirectory.listFiles((dir, name) -> name.endsWith(".yml"));
+        if (ymlFiles == null) {
+            return;
+        }
+        for (File file : ymlFiles) {
+            String menuName = file.getName().substring(0, file.getName().length() - 4);
+            if (Menu.getMenuByName(menuName).isPresent()) {
+                continue;
+            }
+            loadMenuFile(menuName, file);
+        }
+    }
 
+    public boolean loadMenuFromFile(String menuName) {
         String fileName = plugin.getConfig().getString("gui_menus." + menuName + ".file");
+
+        if (fileName == null) {
+            // No config entry — resolve by convention
+            return loadMenuFile(menuName, new File(menuDirectory.getPath(), menuName + ".yml"));
+        }
 
         if (!fileName.endsWith(".yml")) {
             plugin.debug(DebugLevel.HIGHEST, Level.SEVERE, "Filename specified for menu: " + menuName + " is not a .yml file!", "Make sure that the file name to load this menu from is specified as a .yml file!", "Skipping loading of menu: " + menuName);
             return false;
         }
 
-        File f = new File(menuDirectory.getPath(), fileName);
+        return loadMenuFile(menuName, new File(menuDirectory.getPath(), fileName));
+    }
 
+    private boolean loadMenuFile(String menuName, File f) {
         if (!f.exists()) {
             plugin.debug(DebugLevel.HIGHEST, Level.INFO, f.getName() + " does not exist!");
 
@@ -359,7 +363,7 @@ public class DeluxeMenusConfig {
                 }
                 plugin.debug(DebugLevel.HIGHEST, Level.INFO, f.getName() + " created! Add your menu options to this file and use /dm reload to load it!");
             } catch (IOException e) {
-                plugin.debug(DebugLevel.HIGHEST, Level.SEVERE, "Could not create menu file: plugins" + separator + "DeluxeMenus" + separator + "gui_menus" + separator + fileName);
+                plugin.debug(DebugLevel.HIGHEST, Level.SEVERE, "Could not create menu file: plugins" + separator + "DeluxeMenus" + separator + "gui_menus" + separator + f.getName());
                 return false;
             }
         }
@@ -367,7 +371,7 @@ public class DeluxeMenusConfig {
         FileConfiguration cfg = checkConfig(f);
 
         if (cfg == null) {
-            plugin.debug(DebugLevel.HIGHEST, Level.WARNING, "Menu: " + menuName + " in file: " + fileName + " not loaded.");
+            plugin.debug(DebugLevel.HIGHEST, Level.WARNING, "Menu: " + menuName + " in file: " + f.getName() + " not loaded.");
             return false;
         }
 
